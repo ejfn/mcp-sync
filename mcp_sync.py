@@ -214,7 +214,7 @@ def sync_mcp_configs(config_file_path):
     Args:
         config_file_path (str or Path): Path to the MCP servers JSON config file.
     """
-    source_path = Path(config_file_path)
+    source_path = Path(config_file_path).expanduser().resolve()
 
     try:
         with open(source_path, 'r') as f:
@@ -225,25 +225,31 @@ def sync_mcp_configs(config_file_path):
 
     source_servers = source_data.get("mcpServers")
     if not source_servers:
-        print(f"Error: 'mcpServers' key not found or empty in '{source_path}'")
-        return
+        source_servers = source_data.get("servers")
+        if not source_servers:
+            print(f"Error: Neither 'mcpServers' nor 'servers' key found or empty in '{source_path}'")
+            return
 
     server_names = ", ".join(source_servers.keys())
     print(f"Found servers: {server_names}")
     print("Syncing MCP server configurations...")
     
     for config in TOOL_CONFIGS.values():
-        if config['path'].exists():
+        target_path = config['path'].expanduser().resolve()
+        if target_path == source_path:
+            print(f" -> Skipping sync for {config['display_name']} (source config)")
+            continue
+        if target_path.exists():
             display_name = config['display_name']
             print(f" -> Syncing settings for {display_name}")
             
             # Use normalized transformation based on format
             if config['format'] == 'toml':
                 transformed_data = transform_for_codex(source_servers, config['key_mappings'])
-                update_toml_config_file(config['path'], transformed_data)
+                update_toml_config_file(target_path, transformed_data)
             else:  # JSON format
                 transformed_data = transform_json_format(source_servers, config['key_mappings'])
-                update_config_file(config['path'], transformed_data, config['key'])
+                update_config_file(target_path, transformed_data, config['key'])
     
     print("Sync complete.")
 

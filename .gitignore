@@ -19,3 +19,7 @@ venv/
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# Build artifacts
+build/
+mcp_sync.egg-info/

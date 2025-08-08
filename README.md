@@ -10,15 +10,13 @@ The goal of this tool is to maintain a single source of truth for MCP server def
 
 ### Quick Start with uvx (Recommended)
 
-Run directly from GitHub without installation:
+Run directly from GitHub without installation. You can use an existing compatible configuration file (like `.claude.json` or `.gemini/settings.json`) or copy the `sample.json` as a starting point.
 
 ```bash
-# Copy the sample config and customize it
-curl -o my-mcp-config.json https://raw.githubusercontent.com/ejfn/mcp-sync/main/sample.json
-
-# Run the sync tool
-uvx --from git+https://github.com/ejfn/mcp-sync mcp-sync -c my-mcp-config.json
+uvx --from git+https://github.com/ejfn/mcp-sync mcp-sync -c /path/to/your-config.json
 ```
+
+If you use a config file that is also a sync target (e.g., `~/.claude.json`), the tool will skip syncing to that target to avoid overwriting your source.
 
 ### Traditional Installation
 
