@@ -1,6 +1,8 @@
 import argparse
 import json
 import shutil
+import re
+import sys
 from pathlib import Path
 
 # --- Centralized Tool Configuration ---
@@ -101,6 +103,10 @@ def transform_for_codex(source_servers, key_mappings):
             return value.replace('"', '\\"').replace('\n', '\\n').replace('\t', '\\t')
         return str(value)
     
+    def quote_toml_key(key: str) -> str:
+        """Quote and escape a TOML key (for table headers)."""
+        return f'"{escape_toml_string(str(key))}"'
+    
     def format_toml_value(value):
         """Format a Python value as a TOML value."""
         if isinstance(value, str):
@@ -121,7 +127,8 @@ def transform_for_codex(source_servers, key_mappings):
     toml_lines = []
     
     for name, config in source_servers.items():
-        toml_lines.append(f"[mcp_servers.{name}]")
+        # Always quote server names to avoid TOML bare-key edge cases
+        toml_lines.append(f"[mcp_servers.{quote_toml_key(name)}]")
         
         # Map known keys
         for source_key, target_key in key_mappings.items():
@@ -190,7 +197,6 @@ def update_toml_config_file(dest_path, transformed_data):
     Updates a TOML config file with MCP server data.
     Adds new servers or updates existing ones; does NOT remove existing servers.
     """
-    import re
     dest_path.parent.mkdir(parents=True, exist_ok=True)
 
     existing_content = ""
@@ -203,10 +209,13 @@ def update_toml_config_file(dest_path, transformed_data):
 
     # Parse existing server names and their content
     existing_servers = {}
-    server_pattern = r'\[mcp_servers\.([^\]]+)\](.*?)(?=\[mcp_servers\.|$)'
+    # Match quoted or unquoted server names: [mcp_servers."name"] or [mcp_servers.name]
+    server_pattern = r'\[mcp_servers\.(?:"([^"]+)"|([^\]]+))\](.*?)(?=\[mcp_servers\.|$)'
     matches = re.findall(server_pattern, existing_content, re.DOTALL)
-    for server_name, content in matches:
-        existing_servers[server_name] = f"[mcp_servers.{server_name}]{content}".strip()
+    for qname, uname, content in matches:
+        server_name = qname if qname else uname
+        header = f'[mcp_servers."{server_name}"]'
+        existing_servers[server_name] = f"{header}{content}".strip()
     
     # Process new/updated servers
     new_blocks = []
@@ -214,9 +223,9 @@ def update_toml_config_file(dest_path, transformed_data):
     
     for block in transformed_data.split('\n\n'):
         if block.strip():
-            match = re.match(r'\[mcp_servers\.([^\]]+)\]', block.strip())
+            match = re.match(r'\[mcp_servers\.(?:"([^"]+)"|([^\]]+))\]', block.strip())
             if match:
-                server_name = match.group(1)
+                server_name = match.group(1) if match.group(1) else match.group(2)
                 if server_name in existing_servers:
                     # Only update if the content actually changed
                     if existing_servers[server_name] != block.strip():
@@ -235,9 +244,9 @@ def update_toml_config_file(dest_path, transformed_data):
         
         for line in lines:
             stripped = line.strip()
-            server_match = re.match(r'\[mcp_servers\.([^\]]+)\]', stripped)
+            server_match = re.match(r'\[mcp_servers\.(?:"([^"]+)"|([^\]]+))\]', stripped)
             if server_match:
-                current_server = server_match.group(1)
+                current_server = server_match.group(1) if server_match.group(1) else server_match.group(2)
                 if current_server in [name for name, _ in updated_blocks]:
                     skip_section = True
                     continue
@@ -300,6 +309,10 @@ def sync_mcp_configs(config_file_path):
         if not source_servers:
             print(f"Error: Neither 'mcpServers' nor 'servers' key found or empty in '{source_path}'")
             return
+    # Validate source server structure
+    if not isinstance(source_servers, dict):
+        print(f"Error: Source servers must be an object/dict; got {type(source_servers).__name__} from '{source_path}'")
+        return
 
     server_names = ", ".join(source_servers.keys())
     print(f"Found servers: {server_names}")
@@ -307,20 +320,21 @@ def sync_mcp_configs(config_file_path):
     
     for config in TOOL_CONFIGS.values():
         target_path = config['path'].expanduser().resolve()
+        display_name = config['display_name']
         if target_path == source_path:
-            print(f" -> Skipping sync for {config['display_name']} (source config)")
+            print(f" -> Skipping sync for {display_name} (source config)")
             continue
-        if target_path.exists():
-            display_name = config['display_name']
-            print(f" -> Syncing settings for {display_name}")
-            
-            # Use normalized transformation based on format
-            if config['format'] == 'toml':
-                transformed_data = transform_for_codex(source_servers, config['key_mappings'])
-                update_toml_config_file(target_path, transformed_data)
-            else:  # JSON format
-                transformed_data = transform_json_format(source_servers, config['key_mappings'])
-                update_config_file(target_path, transformed_data, config['key'])
+        if not target_path.exists():
+            # Silently skip when target config does not exist
+            continue
+        print(f" -> Syncing settings for {display_name}")
+        # Use normalized transformation based on format
+        if config['format'] == 'toml':
+            transformed_data = transform_for_codex(source_servers, config['key_mappings'])
+            update_toml_config_file(target_path, transformed_data)
+        else:  # JSON format
+            transformed_data = transform_json_format(source_servers, config['key_mappings'])
+            update_config_file(target_path, transformed_data, config['key'])
     
     print("Sync complete.")
 
@@ -357,4 +371,4 @@ Examples:
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
