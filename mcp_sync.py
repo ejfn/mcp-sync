@@ -137,8 +137,8 @@ def transform_for_codex(source_servers, key_mappings):
 
 def update_config_file(dest_path, transformed_data, config_key):
     """
-    Reads a destination JSON file, creates a backup, and updates the
-    specified key with the transformed MCP data. This function is silent on success.
+    Reads a destination JSON file, creates a backup, and adds/updates MCP servers from transformed_data.
+    Does NOT remove existing servers that aren't in the source.
     """
     dest_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -155,7 +155,31 @@ def update_config_file(dest_path, transformed_data, config_key):
                     print(f"Warning: Could not decode JSON from {dest_path}. Its content will be overwritten.")
                     settings = {}
 
-    settings[config_key] = transformed_data
+    # Add new servers or update existing ones, don't remove any
+    existing_servers = settings.get(config_key, {})
+    added_count = 0
+    updated_count = 0
+    
+    for name, config in transformed_data.items():
+        if name not in existing_servers:
+            existing_servers[name] = config
+            added_count += 1
+        else:
+            # Only count as update if the config actually changed
+            if existing_servers[name] != config:
+                existing_servers[name] = config
+                updated_count += 1
+    
+    settings[config_key] = existing_servers
+    
+    if added_count > 0 and updated_count > 0:
+        print(f"    Added {added_count} new server(s), updated {updated_count} existing server(s)")
+    elif added_count > 0:
+        print(f"    Added {added_count} new server(s)")
+    elif updated_count > 0:
+        print(f"    Updated {updated_count} existing server(s)")
+    else:
+        print(f"    No changes needed")
 
     with open(dest_path, 'w') as f:
         json.dump(settings, f, indent=2)
@@ -164,8 +188,9 @@ def update_config_file(dest_path, transformed_data, config_key):
 def update_toml_config_file(dest_path, transformed_data):
     """
     Updates a TOML config file with MCP server data.
-    For Codex CLI, this merges the MCP servers into the existing config.
+    Adds new servers or updates existing ones; does NOT remove existing servers.
     """
+    import re
     dest_path.parent.mkdir(parents=True, exist_ok=True)
 
     existing_content = ""
@@ -176,34 +201,80 @@ def update_toml_config_file(dest_path, transformed_data):
         with open(dest_path, 'r') as f:
             existing_content = f.read()
 
-    # Remove existing [mcp_servers.*] sections
-    lines = existing_content.split('\n')
-    filtered_lines = []
-    skip_section = False
+    # Parse existing server names and their content
+    existing_servers = {}
+    server_pattern = r'\[mcp_servers\.([^\]]+)\](.*?)(?=\[mcp_servers\.|$)'
+    matches = re.findall(server_pattern, existing_content, re.DOTALL)
+    for server_name, content in matches:
+        existing_servers[server_name] = f"[mcp_servers.{server_name}]{content}".strip()
     
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith('[mcp_servers.'):
-            skip_section = True
-            continue
-        elif stripped.startswith('[') and not stripped.startswith('[mcp_servers.'):
-            skip_section = False
+    # Process new/updated servers
+    new_blocks = []
+    updated_blocks = []
+    
+    for block in transformed_data.split('\n\n'):
+        if block.strip():
+            match = re.match(r'\[mcp_servers\.([^\]]+)\]', block.strip())
+            if match:
+                server_name = match.group(1)
+                if server_name in existing_servers:
+                    # Only update if the content actually changed
+                    if existing_servers[server_name] != block.strip():
+                        updated_blocks.append((server_name, block.strip()))
+                else:
+                    # Add new server
+                    new_blocks.append(block.strip())
+    
+    # Rebuild content with updates
+    if new_blocks or updated_blocks:
+        # Remove old server sections and rebuild
+        lines = existing_content.split('\n')
+        filtered_lines = []
+        skip_section = False
+        current_server = None
         
-        if not skip_section:
-            filtered_lines.append(line)
-
-    # Clean up empty lines at the end
-    while filtered_lines and not filtered_lines[-1].strip():
-        filtered_lines.pop()
-
-    # Add the new MCP servers section
-    if filtered_lines:
-        filtered_lines.append("")  # Add separator
-    filtered_lines.append("# MCP Servers Configuration")
-    filtered_lines.extend(transformed_data.split('\n'))
-
-    with open(dest_path, 'w') as f:
-        f.write('\n'.join(filtered_lines))
+        for line in lines:
+            stripped = line.strip()
+            server_match = re.match(r'\[mcp_servers\.([^\]]+)\]', stripped)
+            if server_match:
+                current_server = server_match.group(1)
+                if current_server in [name for name, _ in updated_blocks]:
+                    skip_section = True
+                    continue
+                else:
+                    skip_section = False
+            elif stripped.startswith('[') and not stripped.startswith('[mcp_servers.'):
+                skip_section = False
+                current_server = None
+            
+            if not skip_section:
+                filtered_lines.append(line)
+        
+        # Write updated content
+        with open(dest_path, 'w') as f:
+            f.write('\n'.join(filtered_lines).rstrip())
+            
+            # Add updated servers
+            if updated_blocks:
+                for server_name, block in updated_blocks:
+                    f.write('\n\n' + block)
+            
+            # Add new servers
+            if new_blocks:
+                for block in new_blocks:
+                    f.write('\n\n' + block)
+        
+        added_count = len(new_blocks)
+        updated_count = len(updated_blocks)
+        
+        if added_count > 0 and updated_count > 0:
+            print(f"    Added {added_count} new server(s), updated {updated_count} existing server(s)")
+        elif added_count > 0:
+            print(f"    Added {added_count} new server(s)")
+        elif updated_count > 0:
+            print(f"    Updated {updated_count} existing server(s)")
+    else:
+        print(f"    No changes needed")
 
 
 def sync_mcp_configs(config_file_path):

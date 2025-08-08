@@ -1,6 +1,6 @@
 # MCP Server Sync Tool
 
-This Python script synchronizes MCP (Model Context Protocol) server configurations from a central JSON configuration file to the configuration files of various development tools.
+This Python script synchronizes MCP (Model Context Protocol) server configurations from a source JSON configuration file to the configuration files of various development tools. The tool only adds new servers or updates existing ones - it never removes servers that exist in your target configs but not in the source.
 
 ## Purpose
 
@@ -66,14 +66,17 @@ The tool requires a JSON configuration file that defines your MCP servers. Use t
 
 ## How It Works
 
-The script reads server definitions from your configuration file and transforms them for each supported tool using explicit key mappings. It creates backups of existing configuration files before updating them.
+The script reads server definitions from your source configuration file and adds or updates them in each supported tool's config file. It preserves any existing servers in your target configs that aren't in the source file.
 
 ### Process Overview
 
 1. **Read Configuration**: Loads your MCP server definitions from the specified JSON file
 2. **Find Target Tools**: Locates configuration files for all supported development tools
 3. **Create Backups**: Backs up existing files (e.g., `~/.claude.json` → `~/.claude.json.backup`)
-4. **Transform & Update**: Converts the configuration to each tool's specific format and updates the files
+4. **Add/Update Servers**: 
+   - Adds new servers from the source that don't exist in the target
+   - Updates existing servers if their configuration has changed
+   - Preserves any servers in the target that aren't in the source
 
 ### Key Mapping Architecture
 
@@ -102,11 +105,11 @@ mcp-sync --config <config-file>
 
 **Examples:**
 ```bash
-# Use a local config file
-mcp-sync -c ./my-servers.json
-
 # Use a config file in your home directory
 mcp-sync -c ~/mcp-config.json
+
+# Use an existing tool config as the source (will skip syncing to itself)
+mcp-sync -c ~/.claude.json
 
 # Use the sample config (after copying/customizing it)
 mcp-sync -c sample.json
