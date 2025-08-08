@@ -1,14 +1,81 @@
 # MCP Server Sync Tool
 
-This Python script synchronizes MCP (Model Context Protocol) server configurations from a central `mcp-servers.json` file to the configuration files of various development tools.
+This Python script synchronizes MCP (Model Context Protocol) server configurations from a central JSON configuration file to the configuration files of various development tools.
 
 ## Purpose
 
 The goal of this tool is to maintain a single source of truth for MCP server definitions and ensure that development environments like Claude Code, Gemini CLI, VS Code GitHub Copilot, and OpenAI Codex CLI are all using the same, up-to-date configurations.
 
+## Installation and Usage
+
+### Quick Start with uvx (Recommended)
+
+Run directly from GitHub without installation:
+
+```bash
+# Copy the sample config and customize it
+curl -o my-mcp-config.json https://raw.githubusercontent.com/ejfn/mcp-sync/main/sample.json
+
+# Run the sync tool
+uvx --from git+https://github.com/ejfn/mcp-sync mcp-sync -c my-mcp-config.json
+```
+
+### Traditional Installation
+
+```bash
+# Install the package
+pip install git+https://github.com/ejfn/mcp-sync
+
+# Run the tool
+mcp-sync -c /path/to/your-config.json
+```
+
+### Local Development
+
+```bash
+# Clone the repository
+git clone https://github.com/ejfn/mcp-sync.git
+cd mcp-sync
+
+# Run the script directly
+python3 mcp_sync.py -c sample.json
+```
+
+## Configuration File
+
+The tool requires a JSON configuration file that defines your MCP servers. Use the included `sample.json` as a template:
+
+```json
+{
+  "mcpServers": {
+    "memory": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory@latest"],
+      "env": {}
+    },
+    "your-custom-server": {
+      "type": "stdio", 
+      "command": "your-command",
+      "args": ["arg1", "arg2"],
+      "env": {
+        "API_KEY": "your-api-key"
+      }
+    }
+  }
+}
+```
+
 ## How It Works
 
-The script reads the server definitions from `mcp-servers.json` located in the same directory. For each supported tool, it uses explicit key mappings to transform the data into the correct format and then updates the respective configuration file.
+The script reads server definitions from your configuration file and transforms them for each supported tool using explicit key mappings. It creates backups of existing configuration files before updating them.
+
+### Process Overview
+
+1. **Read Configuration**: Loads your MCP server definitions from the specified JSON file
+2. **Find Target Tools**: Locates configuration files for all supported development tools
+3. **Create Backups**: Backs up existing files (e.g., `~/.claude.json` → `~/.claude.json.backup`)
+4. **Transform & Update**: Converts the configuration to each tool's specific format and updates the files
 
 ### Key Mapping Architecture
 
@@ -22,27 +89,34 @@ This ensures consistent and predictable transformations across all tools.
 
 ### Environment Variables Support
 
-The sync tool supports environment variables in the source configuration. See the included `mcp-servers.json` file for examples of MCP server configurations with environment variable support.
+The sync tool supports environment variables in your configuration. Environment variables in the `env` object will be properly synced to all supported tools using their respective formats.
 
-The environment variables will be properly synced to all supported tools using their respective formats.
-
-## Usage
-
-To run the synchronization process:
+## Command Line Options
 
 ```bash
-python3 mcp-sync.py
+mcp-sync -c <config-file>
+mcp-sync --config <config-file>
 ```
 
-The script will automatically:
-1.  Locate the source `mcp-servers.json`.
-2.  Find the destination configuration files for all supported tools.
-3.  Create a backup of each destination file (e.g., `~/.claude.json` will be backed up to `~/.claude.json.backup`).
-4.  Update the `mcpServers` (or equivalent) key in each destination file with the new configuration.
+**Options:**
+- `-c, --config`: Path to your MCP servers JSON configuration file (required)
+- `-h, --help`: Show help message
+
+**Examples:**
+```bash
+# Use a local config file
+mcp-sync -c ./my-servers.json
+
+# Use a config file in your home directory
+mcp-sync -c ~/mcp-config.json
+
+# Use the sample config (after copying/customizing it)
+mcp-sync -c sample.json
+```
 
 ## Extending the Tool
 
-The script is designed to be easily extensible. To add support for a new tool or modify an existing one, simply update the `TOOL_CONFIGS` dictionary at the top of the `mcp-sync.py` file.
+The script is designed to be easily extensible. To add support for a new tool or modify an existing one, simply update the `TOOL_CONFIGS` dictionary at the top of the `mcp_sync.py` file.
 
 Each entry in the dictionary requires:
 - `display_name`: Human-readable name for the tool
@@ -78,7 +152,7 @@ This architecture ensures that each tool's specific formatting requirements are 
 The sync tool currently supports:
 
 - **Claude Code** (`~/.claude.json`) - Uses `mcpServers` key
-- **Gemini CLI** (`~/.gemini/settings.json`) - Uses `mcpServers` key  
+- **Gemini CLI** (`~/.gemini/settings.json`) - Uses `mcpServers` key
 - **VS Code GitHub Copilot** (`~/.config/Code/User/mcp.json`) - Uses `servers` key
 - **VS Code GitHub Copilot (WSL)** (`~/.vscode-server/data/User/mcp.json`) - Uses `servers` key
 - **OpenAI Codex CLI** (`~/.codex/config.toml`) - Uses `mcp_servers` key in TOML format

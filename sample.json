@@ -7,24 +7,15 @@
         "-y",
         "@modelcontextprotocol/server-memory@latest"
       ],
-      "env": {}      
+      "env": {}
     },
-        "time": {
+    "time": {
       "type": "stdio",
       "command": "uvx",
       "args": [
         "mcp-server-time"
       ],
-      "env": {}      
-    },
-    "context7": {
-      "type": "stdio",
-      "command": "npx",
-      "args": [
-        "-y",
-        "@upstash/context7-mcp"
-      ],
-      "env": {}      
+      "env": {}
     }
   }
 }

@@ -1,3 +1,4 @@
+import argparse
 import json
 import shutil
 from pathlib import Path
@@ -205,23 +206,26 @@ def update_toml_config_file(dest_path, transformed_data):
         f.write('\n'.join(filtered_lines))
 
 
-def sync_mcp_configs():
+def sync_mcp_configs(config_file_path):
     """
     Syncs MCP server configurations by transforming the source data
     for each specific tool's format using a centralized configuration.
+    
+    Args:
+        config_file_path (str or Path): Path to the MCP servers JSON config file.
     """
-    source_path = Path(__file__).parent / 'mcp-servers.json'
+    source_path = Path(config_file_path)
 
     try:
         with open(source_path, 'r') as f:
             source_data = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"Error reading source file {source_path}: {e}")
+        print(f"Error reading source file '{source_path}': {e}")
         return
 
     source_servers = source_data.get("mcpServers")
     if not source_servers:
-        print(f"Error: 'mcpServers' key not found or empty in {source_path}")
+        print(f"Error: 'mcpServers' key not found or empty in '{source_path}'")
         return
 
     server_names = ", ".join(source_servers.keys())
@@ -245,7 +249,34 @@ def sync_mcp_configs():
 
 def main():
     """Entry point for the mcp-sync command."""
-    sync_mcp_configs()
+    parser = argparse.ArgumentParser(
+        description="Sync MCP server configurations across different tools",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s -c /path/to/config.json   # Use config file
+  %(prog)s --config ~/my-mcp.json    # Use config file (long form)
+        """
+    )
+    parser.add_argument(
+        '-c', '--config',
+        type=str,
+        required=True,
+        help='Path to the MCP servers JSON configuration file (required)'
+    )
+    
+    args = parser.parse_args()
+    
+    config_path = Path(args.config)
+    if not config_path.exists():
+        print(f"Error: Config file '{config_path}' does not exist.")
+        return 1
+    if not config_path.is_file():
+        print(f"Error: '{config_path}' is not a file.")
+        return 1
+    
+    print(f"Using config file: {config_path}")
+    sync_mcp_configs(config_path)
 
 
 if __name__ == "__main__":
