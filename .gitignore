@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+
+# IDE/Editor
+.vscode/
+.idea/
+
+# Backup files created by mcp-sync
+*.backup
+
+# OS generated files
+.DS_Store
+Thumbs.db
