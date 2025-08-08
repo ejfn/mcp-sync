@@ -13,89 +13,61 @@ TOOL_CONFIGS = {
         "display_name": "Claude Code",
         "path": HOME_DIR / '.claude.json',
         "key": "mcpServers",
-        "format": "json",
-        "key_mappings": {
-            "type": "type",
-            "command": "command", 
-            "args": "args",
-            "env": "env"
-        }
+        "format": "json"
     },
     "gemini_cli": {
         "display_name": "Gemini CLI",
         "path": HOME_DIR / '.gemini' / 'settings.json',
         "key": "mcpServers",
-        "format": "json",
-        "key_mappings": {
-            "type": "type",
-            "command": "command",
-            "args": "args", 
-            "env": "env"
-        }
+        "format": "json"
     },
     "vscode": {
         "display_name": "GitHub Copilot in VS Code",
         "path": HOME_DIR / '.config' / 'Code' / 'User' / 'mcp.json',
         "key": "servers",
-        "format": "json",
-        "key_mappings": {
-            "type": "type",
-            "command": "command",
-            "args": "args",
-            "env": "env"
-        }
+        "format": "json"
     },
     "vscode_wsl": {
         "display_name": "GitHub Copilot in VS Code (WSL)",
         "path": HOME_DIR / '.vscode-server' / 'data' / 'User' / 'mcp.json',
         "key": "servers",
-        "format": "json",
-        "key_mappings": {
-            "type": "type",
-            "command": "command",
-            "args": "args",
-            "env": "env"
-        }
+        "format": "json"
     },
     "codex": {
         "display_name": "OpenAI Codex CLI",
         "path": HOME_DIR / '.codex' / 'config.toml',
         "key": "mcp_servers",
-        "format": "toml",
-        "key_mappings": {
-            "type": "type",
-            "command": "command",
-            "args": "args",
-            "env": "env"
-        }
+        "format": "toml"
     }
 }
 
 # --- Transformation Functions ---
 
-def transform_json_format(source_servers, key_mappings):
+def transform_json_format(source_servers, tool_name=None):
     """
-    Normalized transformation function for JSON-based tools.
-    Uses explicit key mapping to ensure compatibility.
+    Transformation function for JSON-based tools.
+    Special handling for Gemini CLI: when type == 'http', 'url' becomes 'httpUrl'.
     """
     transformed_servers = {}
-    
     for name, config in source_servers.items():
         server_config = {}
-        # Map known keys
-        for source_key, target_key in key_mappings.items():
-            if source_key in config:
-                server_config[target_key] = config[source_key]
-                
+        # Copy all fields as-is with special handling
+        for key, value in config.items():
+            # Special handling for Gemini CLI: when type == 'http', 'url' becomes 'httpUrl'
+            if tool_name == "gemini_cli" and config.get("type") == "http" and key == "url":
+                server_config["httpUrl"] = value
+            else:
+                server_config[key] = value
+            
         transformed_servers[name] = server_config
     return transformed_servers
 
-def transform_for_codex(source_servers, key_mappings):
+def transform_for_codex(source_servers):
     """
     Transforms the source MCP server data for OpenAI Codex CLI's TOML format.
     Each server becomes a [mcp_servers.{name}] section with all available keys.
-    Uses explicit key mapping to ensure compatibility.
     Returns a TOML string to be written to the config file.
+    Skips any server where type is not 'stdio'.
     """
     def escape_toml_string(value):
         """Escape special characters for TOML string values."""
@@ -127,13 +99,15 @@ def transform_for_codex(source_servers, key_mappings):
     toml_lines = []
     
     for name, config in source_servers.items():
+        # Skip if type is not 'stdio'
+        if config.get('type') != 'stdio':
+            continue
         # Always quote server names to avoid TOML bare-key edge cases
         toml_lines.append(f"[mcp_servers.{quote_toml_key(name)}]")
         
-        # Map known keys
-        for source_key, target_key in key_mappings.items():
-            if source_key in config:
-                toml_lines.append(f"{target_key} = {format_toml_value(config[source_key])}")
+        # Copy all keys as-is
+        for key, value in config.items():
+            toml_lines.append(f"{key} = {format_toml_value(value)}")
         
         toml_lines.append("")  # Empty line between servers
     
@@ -142,18 +116,16 @@ def transform_for_codex(source_servers, key_mappings):
 
 # --- Core Sync Logic ---
 
-def update_config_file(dest_path, transformed_data, config_key):
+def update_config_file(dest_path, transformed_data, config_key, prune=False):
     """
     Reads a destination JSON file, creates a backup, and adds/updates MCP servers from transformed_data.
-    Does NOT remove existing servers that aren't in the source.
+    If prune=True, removes servers not present in the source.
     """
     dest_path.parent.mkdir(parents=True, exist_ok=True)
-
     settings = {}
     if dest_path.exists():
         backup_path = dest_path.with_suffix(dest_path.suffix + '.backup')
         shutil.copy2(dest_path, backup_path)
-
         if dest_path.stat().st_size > 0:
             with open(dest_path, 'r') as f:
                 try:
@@ -161,138 +133,137 @@ def update_config_file(dest_path, transformed_data, config_key):
                 except json.JSONDecodeError:
                     print(f"Warning: Could not decode JSON from {dest_path}. Its content will be overwritten.")
                     settings = {}
-
-    # Add new servers or update existing ones, don't remove any
     existing_servers = settings.get(config_key, {})
     added_count = 0
     updated_count = 0
-    
+    removed_count = 0
+    # Add/update servers
     for name, config in transformed_data.items():
         if name not in existing_servers:
             existing_servers[name] = config
             added_count += 1
         else:
-            # Only count as update if the config actually changed
             if existing_servers[name] != config:
                 existing_servers[name] = config
                 updated_count += 1
-    
+    # Remove servers not present in source if prune is True
+    if prune:
+        to_remove = [name for name in existing_servers if name not in transformed_data]
+        for name in to_remove:
+            del existing_servers[name]
+            removed_count += 1
     settings[config_key] = existing_servers
-    
-    if added_count > 0 and updated_count > 0:
-        print(f"    Added {added_count} new server(s), updated {updated_count} existing server(s)")
-    elif added_count > 0:
-        print(f"    Added {added_count} new server(s)")
-    elif updated_count > 0:
-        print(f"    Updated {updated_count} existing server(s)")
+    msg = []
+    if added_count > 0:
+        msg.append(f"Added {added_count} new server(s)")
+    if updated_count > 0:
+        msg.append(f"Updated {updated_count} existing server(s)")
+    if removed_count > 0:
+        msg.append(f"Removed {removed_count} server(s)")
+    if msg:
+        print("    " + ", ".join(msg))
     else:
         print(f"    No changes needed")
-
     with open(dest_path, 'w') as f:
         json.dump(settings, f, indent=2)
 
 
-def update_toml_config_file(dest_path, transformed_data):
+def update_toml_config_file(dest_path, transformed_data, prune=False):
     """
     Updates a TOML config file with MCP server data.
-    Adds new servers or updates existing ones; does NOT remove existing servers.
+    Adds new servers or updates existing ones; removes servers not present in source if prune=True.
     """
     dest_path.parent.mkdir(parents=True, exist_ok=True)
-
     existing_content = ""
     if dest_path.exists():
         backup_path = dest_path.with_suffix(dest_path.suffix + '.backup')
         shutil.copy2(dest_path, backup_path)
-        
         with open(dest_path, 'r') as f:
             existing_content = f.read()
-
     # Parse existing server names and their content
     existing_servers = {}
-    # Match quoted or unquoted server names: [mcp_servers."name"] or [mcp_servers.name]
     server_pattern = r'\[mcp_servers\.(?:"([^"]+)"|([^\]]+))\](.*?)(?=\[mcp_servers\.|$)'
     matches = re.findall(server_pattern, existing_content, re.DOTALL)
     for qname, uname, content in matches:
         server_name = qname if qname else uname
         header = f'[mcp_servers."{server_name}"]'
         existing_servers[server_name] = f"{header}{content}".strip()
-    
     # Process new/updated servers
     new_blocks = []
     updated_blocks = []
-    
+    source_server_names = set()
     for block in transformed_data.split('\n\n'):
         if block.strip():
             match = re.match(r'\[mcp_servers\.(?:"([^"]+)"|([^\]]+))\]', block.strip())
             if match:
                 server_name = match.group(1) if match.group(1) else match.group(2)
+                source_server_names.add(server_name)
                 if server_name in existing_servers:
-                    # Only update if the content actually changed
                     if existing_servers[server_name] != block.strip():
                         updated_blocks.append((server_name, block.strip()))
                 else:
-                    # Add new server
                     new_blocks.append(block.strip())
-    
+    # Remove servers not present in source if prune is True
+    removed_count = 0
+    if prune:
+        to_remove = [name for name in existing_servers if name not in source_server_names]
+        for name in to_remove:
+            del existing_servers[name]
+            removed_count += 1
     # Rebuild content with updates
-    if new_blocks or updated_blocks:
-        # Remove old server sections and rebuild
-        lines = existing_content.split('\n')
-        filtered_lines = []
-        skip_section = False
-        current_server = None
-        
-        for line in lines:
-            stripped = line.strip()
-            server_match = re.match(r'\[mcp_servers\.(?:"([^"]+)"|([^\]]+))\]', stripped)
-            if server_match:
-                current_server = server_match.group(1) if server_match.group(1) else server_match.group(2)
-                if current_server in [name for name, _ in updated_blocks]:
-                    skip_section = True
-                    continue
-                else:
-                    skip_section = False
-            elif stripped.startswith('[') and not stripped.startswith('[mcp_servers.'):
+    lines = existing_content.split('\n')
+    filtered_lines = []
+    skip_section = False
+    current_server = None
+    for line in lines:
+        stripped = line.strip()
+        server_match = re.match(r'\[mcp_servers\.(?:"([^"]+)"|([^\]]+))\]', stripped)
+        if server_match:
+            current_server = server_match.group(1) if server_match.group(1) else server_match.group(2)
+            if current_server in [name for name, _ in updated_blocks]:
+                skip_section = True
+                continue
+            elif prune and current_server not in source_server_names:
+                skip_section = True
+                continue
+            else:
                 skip_section = False
-                current_server = None
-            
-            if not skip_section:
-                filtered_lines.append(line)
-        
-        # Write updated content
-        with open(dest_path, 'w') as f:
-            f.write('\n'.join(filtered_lines).rstrip())
-            
-            # Add updated servers
-            if updated_blocks:
-                for server_name, block in updated_blocks:
-                    f.write('\n\n' + block)
-            
-            # Add new servers
-            if new_blocks:
-                for block in new_blocks:
-                    f.write('\n\n' + block)
-        
-        added_count = len(new_blocks)
-        updated_count = len(updated_blocks)
-        
-        if added_count > 0 and updated_count > 0:
-            print(f"    Added {added_count} new server(s), updated {updated_count} existing server(s)")
-        elif added_count > 0:
-            print(f"    Added {added_count} new server(s)")
-        elif updated_count > 0:
-            print(f"    Updated {updated_count} existing server(s)")
+        elif stripped.startswith('[') and not stripped.startswith('[mcp_servers.'):
+            skip_section = False
+            current_server = None
+        if not skip_section:
+            filtered_lines.append(line)
+    with open(dest_path, 'w') as f:
+        f.write('\n'.join(filtered_lines).rstrip())
+        if updated_blocks:
+            for server_name, block in updated_blocks:
+                f.write('\n\n' + block)
+        if new_blocks:
+            for block in new_blocks:
+                f.write('\n\n' + block)
+    added_count = len(new_blocks)
+    updated_count = len(updated_blocks)
+    msg = []
+    if added_count > 0:
+        msg.append(f"Added {added_count} new server(s)")
+    if updated_count > 0:
+        msg.append(f"Updated {updated_count} existing server(s)")
+    if removed_count > 0:
+        msg.append(f"Removed {removed_count} server(s)")
+    if msg:
+        print("    " + ", ".join(msg))
     else:
         print(f"    No changes needed")
 
 
-def sync_mcp_configs(config_file_path):
+def sync_mcp_configs(config_file_path, prune=False):
     """
     Syncs MCP server configurations by transforming the source data
     for each specific tool's format using a centralized configuration.
-    
+    Optionally removes servers not present in the source if prune=True.
     Args:
         config_file_path (str or Path): Path to the MCP servers JSON config file.
+        prune (bool): If True, remove servers not present in the source.
     """
     source_path = Path(config_file_path).expanduser().resolve()
 
@@ -305,10 +276,8 @@ def sync_mcp_configs(config_file_path):
 
     source_servers = source_data.get("mcpServers")
     if not source_servers:
-        source_servers = source_data.get("servers")
-        if not source_servers:
-            print(f"Error: Neither 'mcpServers' nor 'servers' key found or empty in '{source_path}'")
-            return
+        print(f"Error: 'mcpServers' key not found or empty in '{source_path}'")
+        return
     # Validate source server structure
     if not isinstance(source_servers, dict):
         print(f"Error: Source servers must be an object/dict; got {type(source_servers).__name__} from '{source_path}'")
@@ -318,7 +287,7 @@ def sync_mcp_configs(config_file_path):
     print(f"Found servers: {server_names}")
     print("Syncing MCP server configurations...")
     
-    for config in TOOL_CONFIGS.values():
+    for tool_name, config in TOOL_CONFIGS.items():
         target_path = config['path'].expanduser().resolve()
         display_name = config['display_name']
         if target_path == source_path:
@@ -328,13 +297,13 @@ def sync_mcp_configs(config_file_path):
             # Silently skip when target config does not exist
             continue
         print(f" -> Syncing settings for {display_name}")
-        # Use normalized transformation based on format
+        # Use transformation based on format
         if config['format'] == 'toml':
-            transformed_data = transform_for_codex(source_servers, config['key_mappings'])
-            update_toml_config_file(target_path, transformed_data)
+            transformed_data = transform_for_codex(source_servers)
+            update_toml_config_file(target_path, transformed_data, prune=prune)
         else:  # JSON format
-            transformed_data = transform_json_format(source_servers, config['key_mappings'])
-            update_config_file(target_path, transformed_data, config['key'])
+            transformed_data = transform_json_format(source_servers, tool_name=tool_name)
+            update_config_file(target_path, transformed_data, config['key'], prune=prune)
     
     print("Sync complete.")
 
@@ -347,6 +316,7 @@ def main():
 Examples:
   %(prog)s -c /path/to/config.json   # Use config file
   %(prog)s --config ~/my-mcp.json    # Use config file (long form)
+  %(prog)s -c config.json --prune    # Remove servers not present in source
         """
     )
     parser.add_argument(
@@ -355,9 +325,12 @@ Examples:
         required=True,
         help='Path to the MCP servers JSON configuration file (required)'
     )
-    
+    parser.add_argument(
+        '--prune',
+        action='store_true',
+        help='Remove MCP servers from target configs that are not present in the source config'
+    )
     args = parser.parse_args()
-    
     config_path = Path(args.config)
     if not config_path.exists():
         print(f"Error: Config file '{config_path}' does not exist.")
@@ -365,10 +338,8 @@ Examples:
     if not config_path.is_file():
         print(f"Error: '{config_path}' is not a file.")
         return 1
-    
     print(f"Using config file: {config_path}")
-    sync_mcp_configs(config_path)
-
+    sync_mcp_configs(config_path, prune=args.prune)
 
 if __name__ == "__main__":
     sys.exit(main())

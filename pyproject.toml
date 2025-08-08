@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mcp-sync"
-version = "0.1.1"
+version = "0.2.0"
 description = "Sync MCP server configurations across different tools"
 readme = "README.md"
 license = "MIT"
